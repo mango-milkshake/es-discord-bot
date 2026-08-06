@@ -5,10 +5,12 @@ import logging
 from dotenv import load_dotenv
 import os, aiosqlite
 from datetime import datetime, timedelta, timezone, time
+from keep_alive import keep_alive
 
 load_dotenv()
-
 token = os.getenv('BOT_TOKEN')
+
+keep_alive()
 
 # Logging Handler
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
