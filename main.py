@@ -3,7 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import logging
 from dotenv import load_dotenv
-import os, aiosqlite
+import os, libsql
 from datetime import datetime, timedelta, timezone, time
 from keep_alive import keep_alive
 
@@ -27,35 +27,38 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # SQLite Database Setup
 DB_FILE = "timed_roles.db"
+TURSO_URL = os.getenv("TURSO_DATABASE_URL")
+TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
+
+db = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
 
 async def init_db():
     '''Create database table and indexes (if not yet existing)'''
     try:
-        async with aiosqlite.connect(DB_FILE, timeout=5.0) as db:
-            # Create main storage table:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS timed_roles (
-                    user_id INTEGER, 
-                    guild_id INTEGER,
-                    role_id INTEGER,
-                    end_time TEXT,
-                    PRIMARY KEY (user_id, guild_id, role_id)
-                )
-            """)
+        # Create main timed roles table:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS timed_roles (
+                user_id INTEGER, 
+                guild_id INTEGER,
+                role_id INTEGER,
+                end_time TEXT,
+                PRIMARY KEY (user_id, guild_id, role_id)
+            )
+        """)
 
-            # Create index for tracking role end time:
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_end_time ON timed_roles (end_time)")
-            
-            # Create table for Guild (Server) configs:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS guild_settings (
-                    guild_id INTEGER PRIMARY KEY,
-                    role_log_channel_id INTEGER
-                )
-            """)
+        # Create index for tracking role end time:
+        db.execute("CREATE INDEX IF NOT EXISTS idx_end_time ON timed_roles (end_time)")
+        
+        # Create table for Guild (Server) configs:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS guild_settings (
+                guild_id INTEGER PRIMARY KEY,
+                role_log_channel_id INTEGER
+            )
+        """)
 
-            await db.commit()
-        print("SQLite Database Initialized")
+        db.commit()
+        print("Turbo Database Initialized")
     except Exception as e:
         print(f"Database Initialization Error: {e}")
 
@@ -98,12 +101,11 @@ async def syncserver(ctx):
 async def setrolelog(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
     
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("""
+    db.execute("""
             INSERT OR REPLACE INTO guild_settings (guild_id, role_log_channel_id)
             VALUES (?, ?)
     """, (interaction.guild.id, channel.id))
-        await db.commit()
+    db.commit()
     
     await interaction.followup.send(f"Timed role updates set up to be logged in {channel.mention}.", ephemeral=True)
 
@@ -133,78 +135,76 @@ async def addrole(
     member = interaction.guild.get_member(user.id)
     action_type = "Assignment"
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        # Check if user already has this role
-        async with db.execute(
-            "SELECT end_time FROM timed_roles WHERE user_id = ? AND guild_id = ? AND role_id = ?",
-            (user.id, interaction.guild.id, role.id)
-        ) as cursor:
-            row = await cursor.fetchone()
-        
-        if row:
-            # User already has role -> extend duration
-            action_type = "Extension"
-            new_end = datetime.fromisoformat(row[0]) + timedelta(days=duration)
-            status_msg = f"Extended **{role.name}** for {user.mention} by {duration} days."
-        else:
-            # User does not have role yet
-            new_end = datetime.now(timezone.utc) + timedelta(days=duration)
-            status_msg = f"Assigned **{role.name}** to {user.mention} for {duration} days."
-        
-        # Assign role to user if they do not have it
-        if member and role not in member.roles:
-            try:
-                await member.add_roles(role)
-            except discord.Forbidden:
-                return await interaction.followup.send("Error: {role.name} Role could not be added.", ephemeral=True)
-        
-        # Update database with new end timing
-        await db.execute("""
-            INSERT OR REPLACE INTO timed_roles (user_id, guild_id, role_id, end_time)
-            VALUES (?, ?, ?, ?)
-        """, (user.id, interaction.guild.id, role.id, new_end.isoformat()))
-        await db.commit()
-
-        # Send update log into specified channel
-        async with db.execute(
-            "SELECT role_log_channel_id FROM guild_settings WHERE guild_id = ?",
-            (interaction.guild.id,)
-        ) as cursor:
-            row = await cursor.fetchone()
+    # Check if user already has this role
+    cursor = db.execute(
+        "SELECT end_time FROM timed_roles WHERE user_id = ? AND guild_id = ? AND role_id = ?",
+        (user.id, interaction.guild.id, role.id)
+    )
+    row = cursor.fetchone()
     
-        if row:
-            role_log_channel = bot.get_channel(row[0])
-            if role_log_channel:
-                embed_color = discord.Color.green() if action_type == "Assignment" else discord.Color.blue() 
+    if row:
+        # User already has role -> extend duration
+        action_type = "Extension"
+        new_end = datetime.fromisoformat(row[0]) + timedelta(days=duration)
+        status_msg = f"Extended **{role.name}** for {user.mention} by {duration} days."
+    else:
+        # User does not have role yet
+        new_end = datetime.now(timezone.utc) + timedelta(days=duration)
+        status_msg = f"Assigned **{role.name}** to {user.mention} for {duration} days."
+    
+    # Assign role to user if they do not have it
+    if member and role not in member.roles:
+        try:
+            await member.add_roles(role)
+        except discord.Forbidden:
+            return await interaction.followup.send("Error: {role.name} Role could not be added.", ephemeral=True)
+    
+    # Update database with new end timing
+    db.execute("""
+        INSERT OR REPLACE INTO timed_roles (user_id, guild_id, role_id, end_time)
+        VALUES (?, ?, ?, ?)
+    """, (user.id, interaction.guild.id, role.id, new_end.isoformat()))
+    db.commit()
 
-                embed = discord.Embed(
-                    title=f"Timed Role {action_type}",
-                    description=status_msg,
-                    color=embed_color,
-                    timestamp=datetime.now(timezone.utc)
-                )
-                embed.add_field(name="User", value=f"{user} ({user.id})", inline=True)
-                timestamp = int(new_end.timestamp())
-                embed.add_field(name="New Role Expiration Date", value=f"<t:{timestamp}:F> (<t:{timestamp}:R>)")
-                await role_log_channel.send(embed=embed)
-            else:
-                # Log channel not set up yet
-                await interaction.followup.send("Warning: logging channel not set up", ephemeral=True)
+    # Send update log into specified channel
+    cursor = db.execute(
+        "SELECT role_log_channel_id FROM guild_settings WHERE guild_id = ?",
+        (interaction.guild.id,)
+    )
+    row = cursor.fetchone()
+
+    if row:
+        role_log_channel = bot.get_channel(row[0])
+        if role_log_channel:
+            embed_color = discord.Color.green() if action_type == "Assignment" else discord.Color.blue() 
+
+            embed = discord.Embed(
+                title=f"Timed Role {action_type}",
+                description=status_msg,
+                color=embed_color,
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(name="User", value=f"{user} ({user.id})", inline=True)
+            timestamp = int(new_end.timestamp())
+            embed.add_field(name="New Role Expiration Date", value=f"<t:{timestamp}:F> (<t:{timestamp}:R>)")
+            await role_log_channel.send(embed=embed)
         else:
+            # Log channel not set up yet
             await interaction.followup.send("Warning: logging channel not set up", ephemeral=True)
+    else:
+        await interaction.followup.send("Warning: logging channel not set up", ephemeral=True)
 
-        await interaction.followup.send("Role update successful!", ephemeral=True)
+    await interaction.followup.send("Role update successful!", ephemeral=True)
 
 @bot.tree.command(name="checkrole", description="Check how much time you have left on a timed role")
 @app_commands.describe(role="The timed role to check")
 async def checkrole(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.defer(ephemeral=True)
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("""
-            SELECT end_time FROM timed_roles WHERE
-            user_id = ? AND guild_id = ? AND role_id = ?
-        """, (interaction.user.id, interaction.guild.id, role.id)) as cursor:
-            row = await cursor.fetchone()
+    cursor = db.execute("""
+        SELECT end_time FROM timed_roles WHERE
+        user_id = ? AND guild_id = ? AND role_id = ?
+    """, (interaction.user.id, interaction.guild.id, role.id))
+    row = cursor.fetchone()
 
     if not row:
         return await interaction.followup.send(
@@ -223,66 +223,65 @@ async def check_role_expiry(guild_id: int = None):
     # Runs daily at 00:00 UTC to remove expired roles
     now = datetime.now(timezone.utc).isoformat()
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        if guild_id:
-            query = "SELECT user_id, guild_id, role_id FROM timed_roles WHERE end_time <= ? AND guild_id = ?"
-            params = (now, guild_id)
-        else:
-            query = "SELECT user_id, guild_id, role_id FROM timed_roles WHERE end_time <= ?"
-            params = (now,)
-        async with db.execute(query, params) as cursor:
-            expired_roles = await cursor.fetchall()
-        
-        if not expired_roles:
-            return
-        
-        for user_id, guild_id, role_id in expired_roles:
-            guild = bot.get_guild(guild_id)
-            if not guild:
-                # guild no longer exists, delete records
-                await db.execute(
-                    "DELETE FROM timed_roles WHERE user_id = ? AND guild_id = ? AND role_id = ?",
-                    (user_id, guild_id, role_id)
-                )
-                continue
-
-            role = guild.get_role(role_id)
-            member = guild.get_member(user_id)
-            removed = False
-            if member and role and role in member.roles:
-                await member.remove_roles(role, reason="Timed role expired.")
-                removed = True
-            
-            async with db.execute(
-                "SELECT role_log_channel_id FROM guild_settings WHERE guild_id = ?",
-                (guild.id,)
-            ) as cursor:
-                row = await cursor.fetchone()
+    if guild_id:
+        query = "SELECT user_id, guild_id, role_id FROM timed_roles WHERE end_time <= ? AND guild_id = ?"
+        params = (now, guild_id)
+    else:
+        query = "SELECT user_id, guild_id, role_id FROM timed_roles WHERE end_time <= ?"
+        params = (now,)
+    cursor = db.execute(query, params)
+    expired_roles = cursor.fetchall()
     
-                if row:
-                    role_log_channel = bot.get_channel(row[0])
-                    if role_log_channel:
-                        embed = discord.Embed(
-                            title=f"Timed Role Expiry",
-                            color=discord.Color.red(),
-                            timestamp=datetime.now(timezone.utc)
-                        )
-                        user_str = member.mention if member else f"`User ID: {user_id}`"
-                        role_str = role.mention if role else f"`Role ID: {role_id}`"
-                        embed.add_field(name="User", value=user_str, inline=True)
-                        embed.add_field(name="Role expired", value=role_str, inline=True)
-                        embed.add_field(
-                            name="Status",
-                            value="Role Removed" if removed else "Role already missing",
-                            inline=False
-                        )
-                        await role_log_channel.send(embed=embed)
-
-            await db.execute(
+    if not expired_roles:
+        return
+    
+    for user_id, guild_id, role_id in expired_roles:
+        guild = bot.get_guild(guild_id)
+        if not guild:
+            # guild no longer exists, delete records
+            db.execute(
                 "DELETE FROM timed_roles WHERE user_id = ? AND guild_id = ? AND role_id = ?",
                 (user_id, guild_id, role_id)
             )
-            await db.commit()
+            continue
+
+        role = guild.get_role(role_id)
+        member = guild.get_member(user_id)
+        removed = False
+        if member and role and role in member.roles:
+            await member.remove_roles(role, reason="Timed role expired.")
+            removed = True
+        
+        cursor = db.execute(
+            "SELECT role_log_channel_id FROM guild_settings WHERE guild_id = ?",
+            (guild.id,)
+        )
+        row = cursor.fetchone()
+
+        if row:
+            role_log_channel = bot.get_channel(row[0])
+            if role_log_channel:
+                embed = discord.Embed(
+                    title=f"Timed Role Expiry",
+                    color=discord.Color.red(),
+                    timestamp=datetime.now(timezone.utc)
+                )
+                user_str = member.mention if member else f"`User ID: {user_id}`"
+                role_str = role.mention if role else f"`Role ID: {role_id}`"
+                embed.add_field(name="User", value=user_str, inline=True)
+                embed.add_field(name="Role expired", value=role_str, inline=True)
+                embed.add_field(
+                    name="Status",
+                    value="Role Removed" if removed else "Role already missing",
+                    inline=False
+                )
+                await role_log_channel.send(embed=embed)
+
+        db.execute(
+            "DELETE FROM timed_roles WHERE user_id = ? AND guild_id = ? AND role_id = ?",
+            (user_id, guild_id, role_id)
+        )
+        db.commit()
 
 CHECK_TIME = time(hour=0, minute=0, tzinfo=timezone.utc)
 
@@ -350,13 +349,12 @@ class RolePageView(discord.ui.View):
 @app_commands.checks.has_permissions(manage_roles=True)
 async def listrole(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.defer(ephemeral=False)
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("""
-            SELECT user_id, end_time FROM timed_roles
-            WHERE guild_id = ? AND role_id = ?
-            ORDER BY end_time ASC
-        """, (interaction.guild.id, role.id)) as cursor:
-            rows = await cursor.fetchall()
+    cursor = db.execute("""
+        SELECT user_id, end_time FROM timed_roles
+        WHERE guild_id = ? AND role_id = ?
+        ORDER BY end_time ASC
+    """, (interaction.guild.id, role.id))
+    rows = cursor.fetchall()
     if not rows:
         return await interaction.followup.send(f"No users with **{role.name}** role.", ephemeral=True)
     view = RolePageView(data=rows, role_name=role.name)
@@ -370,84 +368,83 @@ async def clearrole(interaction: discord.Interaction, role: discord.Role = None)
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        if role is not None: # clear certain role only
-            async with db.execute(
-                "SELECT user_id FROM timed_roles WHERE guild_id = ? AND role_id = ?",
-                (guild.id, role.id)
-            ) as cursor:
-                rows = await cursor.fetchall()
-            if not rows and not role.members:
-                return await interaction.followup.send(f"No active timed roles for **{role.name}**.", ephemeral=True)
-            
-            await db.execute(
-                "DELETE FROM timed_roles WHERE guild_id = ? AND role_id = ?",
-                (guild.id, role.id)
-            )
-            await db.commit()
-
-            removed_count = 0
-            for member in role.members:
-                await member.remove_roles(role)
-                removed_count += 1
-            await interaction.followup.send(f"Cleared **{role.name}** role.", ephemeral=True)
-            log_title = "Timed Role Cleared"
-            log_description = f"{interaction.user.mention} cleared the **{role.name}** role."
-            db_count = len(rows)
-            dc_count = removed_count
+    if role is not None: # clear certain role only
+        cursor = db.execute(
+            "SELECT user_id FROM timed_roles WHERE guild_id = ? AND role_id = ?",
+            (guild.id, role.id)
+        )
+        rows = cursor.fetchall()
+        if not rows and not role.members:
+            return await interaction.followup.send(f"No active timed roles for **{role.name}**.", ephemeral=True)
         
-        else: # Clear all timed roles in server
-            async with db.execute(
-                "SELECT user_id, role_id FROM timed_roles WHERE guild_id = ?",
-                (guild.id,)
-            ) as cursor:
-                rows = await cursor.fetchall()
-            if not rows:
-                return await interaction.followup.send("No active timed roles in this server.", ephemeral=True)
-            
-            removed_count = 0
-            for user_id, role_id in rows:
-                member = guild.get_member(user_id)
-                target_role = guild.get_role(role_id)
-                if member and target_role and target_role in member.roles:
-                    await member.remove_roles(target_role)
-                    removed_count += 1
-            
-            await db.execute("DELETE FROM timed_roles WHERE guild_id = ?", (guild.id,))
-            await db.commit()
-            await interaction.followup.send(f"Cleared all timed roles in server.", ephemeral=True)
+        db.execute(
+            "DELETE FROM timed_roles WHERE guild_id = ? AND role_id = ?",
+            (guild.id, role.id)
+        )
+        db.commit()
 
-            log_title = "Timed Roles Cleared"
-            log_description = f"{interaction.user.mention} cleared **all** timed roles for this server."
-            db_count = len(rows)
-            dc_count = removed_count
-        
-        async with db.execute(
-            "SELECT role_log_channel_id FROM guild_settings WHERE guild_id = ?", (guild.id,)
-        ) as cursor:
-            row = await cursor.fetchone()
+        removed_count = 0
+        for member in role.members:
+            await member.remove_roles(role)
+            removed_count += 1
+        await interaction.followup.send(f"Cleared **{role.name}** role.", ephemeral=True)
+        log_title = "Timed Role Cleared"
+        log_description = f"{interaction.user.mention} cleared the **{role.name}** role."
+        db_count = len(rows)
+        dc_count = removed_count
     
-        if row:
-            role_log_channel = bot.get_channel(row[0])
-            if role_log_channel:
-                embed = discord.Embed(
-                    title=log_title,
-                    description=log_description,
-                    color=discord.Color.dark_red(),
-                    timestamp=datetime.now(timezone.utc)
-                )
-                if role:
-                    embed.add_field(name="Role cleared", value=role.mention, inline=True)
-                else:
-                    embed.add_field(name="Role cleared", value="all", inline=True)
-                embed.add_field(name="Database records removed", value=str(db_count), inline=True)
-                embed.add_field(name="Roles removed", value=str(dc_count), inline=True)
-                await role_log_channel.send(embed=embed)
+    else: # Clear all timed roles in server
+        cursor = db.execute(
+            "SELECT user_id, role_id FROM timed_roles WHERE guild_id = ?",
+            (guild.id,)
+        )
+        rows = cursor.fetchall()
+        if not rows:
+            return await interaction.followup.send("No active timed roles in this server.", ephemeral=True)
+        
+        removed_count = 0
+        for user_id, role_id in rows:
+            member = guild.get_member(user_id)
+            target_role = guild.get_role(role_id)
+            if member and target_role and target_role in member.roles:
+                await member.remove_roles(target_role)
+                removed_count += 1
+        
+        db.execute("DELETE FROM timed_roles WHERE guild_id = ?", (guild.id,))
+        db.commit()
+        await interaction.followup.send(f"Cleared all timed roles in server.", ephemeral=True)
+
+        log_title = "Timed Roles Cleared"
+        log_description = f"{interaction.user.mention} cleared **all** timed roles for this server."
+        db_count = len(rows)
+        dc_count = removed_count
+        
+    cursor = db.execute(
+        "SELECT role_log_channel_id FROM guild_settings WHERE guild_id = ?", (guild.id,)
+    )
+    row = cursor.fetchone()
+
+    if row:
+        role_log_channel = bot.get_channel(row[0])
+        if role_log_channel:
+            embed = discord.Embed(
+                title=log_title,
+                description=log_description,
+                color=discord.Color.dark_red(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            if role:
+                embed.add_field(name="Role cleared", value=role.mention, inline=True)
             else:
-                # Log channel not set up yet
-                await interaction.followup.send("Warning: logging channel not set up", ephemeral=True)
+                embed.add_field(name="Role cleared", value="all", inline=True)
+            embed.add_field(name="Database records removed", value=str(db_count), inline=True)
+            embed.add_field(name="Roles removed", value=str(dc_count), inline=True)
+            await role_log_channel.send(embed=embed)
         else:
+            # Log channel not set up yet
             await interaction.followup.send("Warning: logging channel not set up", ephemeral=True)
+    else:
+        await interaction.followup.send("Warning: logging channel not set up", ephemeral=True)
 
 # run bot
 
