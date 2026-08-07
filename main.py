@@ -171,7 +171,7 @@ async def addrole(
     row = cursor.fetchone()
 
     if row:
-        role_log_channel = bot.get_channel(row[0])
+        role_log_channel = bot.get_channel(int(row[0]))
         if role_log_channel:
             embed_color = discord.Color.green() if action_type == "Assignment" else discord.Color.blue() 
 
@@ -256,7 +256,7 @@ async def check_role_expiry(guild_id: int = None):
         row = cursor.fetchone()
 
         if row:
-            role_log_channel = bot.get_channel(row[0])
+            role_log_channel = bot.get_channel(int(row[0]))
             if role_log_channel:
                 embed = discord.Embed(
                     title=f"Timed Role Expiry",
@@ -422,7 +422,7 @@ async def clearrole(interaction: discord.Interaction, role: discord.Role = None)
     row = cursor.fetchone()
 
     if row:
-        role_log_channel = bot.get_channel(row[0])
+        role_log_channel = bot.get_channel(int(row[0]))
         if role_log_channel:
             embed = discord.Embed(
                 title=log_title,
