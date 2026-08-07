@@ -92,6 +92,15 @@ async def syncserver(ctx):
     await bot.tree.sync(guild=ctx.guild)
     await ctx.send("Slash commands synced for this server")
 
+# check if bot is up 
+
+@bot.listen('on_interaction')
+async def log_interactions(interaction: discord.Interaction):
+    cmd_name = interaction.data.get('name') if interaction.data else 'Unknown'
+    print(f"[DEBUG] Received interaction: '{cmd_name}' from {interaction.user}")
+
+# set logging channel
+
 @bot.tree.command(name="setrolelog", description="Sets channel for timed role updates logging")
 @app_commands.describe(channel="The channel to send timed role updates logs to")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -154,7 +163,7 @@ async def addrole(
         try:
             await member.add_roles(role)
         except discord.Forbidden:
-            return await interaction.followup.send("Error: {role.name} Role could not be added.", ephemeral=True)
+            return await interaction.followup.send(f"Error: {role.name} Role could not be added.", ephemeral=True)
     
     # Update database with new end timing
     db.execute("""
