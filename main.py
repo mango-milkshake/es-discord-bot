@@ -109,20 +109,21 @@ async def setrolelog(interaction: discord.Interaction, channel: discord.TextChan
 
 @bot.tree.command(name="addrole", description="Assigns or extends a timed role for a member")
 @app_commands.describe(
-    member="User to assign role to",
+    user="User to assign role to",
     role="Role to be assigned",
     duration="Duration of role in days"
 )
 @app_commands.checks.has_permissions(manage_roles=True)
-async def addrole(interaction: discord.Interaction, member: discord.Member, role: discord.Role, duration: int):
+async def addrole(interaction: discord.Interaction, user: discord.User, role: discord.Role, duration: int):
     await interaction.response.defer(ephemeral=True) # Give bot longer time to respond in interaction
+    member = interaction.guild.get_member(user.id)
     action_type = "Assignment"
 
     async with aiosqlite.connect(DB_FILE) as db:
         # Check if user already has this role
         async with db.execute(
             "SELECT end_time FROM timed_roles WHERE user_id = ? AND guild_id = ? AND role_id = ?",
-            (member.id, interaction.guild.id, role.id)
+            (user.id, interaction.guild.id, role.id)
         ) as cursor:
             row = await cursor.fetchone()
         
@@ -130,24 +131,24 @@ async def addrole(interaction: discord.Interaction, member: discord.Member, role
             # User already has role -> extend duration
             action_type = "Extension"
             new_end = datetime.fromisoformat(row[0]) + timedelta(days=duration)
-            status_msg = f"Extended **{role.name}** for {member.mention} by {duration} days."
+            status_msg = f"Extended **{role.name}** for {user.mention} by {duration} days."
         else:
             # User does not have role yet
             new_end = datetime.now(timezone.utc) + timedelta(days=duration)
-            status_msg = f"Assigned **{role.name}** to {member.mention} for {duration} days."
+            status_msg = f"Assigned **{role.name}** to {user.mention} for {duration} days."
         
         # Assign role to user if they do not have it
-        if role not in member.roles:
+        if member and role not in member.roles:
             try:
                 await member.add_roles(role)
             except discord.Forbidden:
-                return await interaction.followup.send("Error: {role} Role could not be added.", ephemeral=True)
+                return await interaction.followup.send("Error: {role.name} Role could not be added.", ephemeral=True)
         
         # Update database with new end timing
         await db.execute("""
             INSERT OR REPLACE INTO timed_roles (user_id, guild_id, role_id, end_time)
             VALUES (?, ?, ?, ?)
-        """, (member.id, interaction.guild.id, role.id, new_end.isoformat()))
+        """, (user.id, interaction.guild.id, role.id, new_end.isoformat()))
         await db.commit()
 
         # Send update log into specified channel
@@ -168,7 +169,7 @@ async def addrole(interaction: discord.Interaction, member: discord.Member, role
                     color=embed_color,
                     timestamp=datetime.now(timezone.utc)
                 )
-                embed.add_field(name="User", value=f"{member} ({member.id})", inline=True)
+                embed.add_field(name="User", value=f"{user} ({user.id})", inline=True)
                 timestamp = int(new_end.timestamp())
                 embed.add_field(name="New Role Expiration Date", value=f"<t:{timestamp}:F> (<t:{timestamp}:R>)")
                 await role_log_channel.send(embed=embed)
