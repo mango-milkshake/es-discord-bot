@@ -204,18 +204,18 @@ async def checkrole(interaction: discord.Interaction, role: discord.Role):
 
 # role expiry checker
 
-CHECK_TIME = time(hour=0, minute=0, tzinfo=timezone.utc)
-
-@tasks.loop(time=CHECK_TIME)
-async def check_expired_roles():
+async def check_role_expiry(guild_id: int = None):
     # Runs daily at 00:00 UTC to remove expired roles
     now = datetime.now(timezone.utc).isoformat()
 
     async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute(
-            "SELECT user_id, guild_id, role_id FROM timed_roles WHERE end_time <= ?",
-            (now,)
-        ) as cursor:
+        if guild_id:
+            query = "SELECT user_id, guild_id, role_id FROM timed_roles WHERE end_time <= ? AND guild_id = ?"
+            params = (now, guild_id)
+        else:
+            query = "SELECT user_id, guild_id, role_id FROM timed_roles WHERE end_time <= ?"
+            params = (now,)
+        async with db.execute(query, params) as cursor:
             expired_roles = await cursor.fetchall()
         
         if not expired_roles:
@@ -269,11 +269,18 @@ async def check_expired_roles():
             )
             await db.commit()
 
-@bot.command()
-@commands.is_owner()
-async def expirytest(ctx):
-    await check_expired_roles()
-    await ctx.send("Role expiry check completed.")
+CHECK_TIME = time(hour=0, minute=0, tzinfo=timezone.utc)
+
+@tasks.loop(time=CHECK_TIME)
+async def daily_expiry_check():
+    await check_role_expiry()
+
+@bot.tree.command(name="checkexpiry", description="Immediately run role expiration check for this server.")
+@app_commands.checks.has_permissions(administrator=True)
+async def checkexpiry(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    await check_role_expiry(guild_id=interaction.guild.id)
+    await interaction.followup.send("Role expiry check completed for this server.", ephemeral=True)
 
 # view roles
 
