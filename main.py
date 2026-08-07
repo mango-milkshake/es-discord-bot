@@ -10,7 +10,9 @@ from keep_alive import keep_alive
 load_dotenv()
 token = os.getenv('BOT_TOKEN')
 
-keep_alive()
+TEST_MODE = False
+if TEST_MODE == False:
+    keep_alive()
 
 # Logging Handler
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
