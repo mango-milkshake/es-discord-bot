@@ -111,7 +111,8 @@ async def setrolelog(interaction: discord.Interaction, channel: discord.TextChan
 @app_commands.describe(
     user="User to assign role to",
     role="Role to be assigned",
-    duration="Duration of role in days"
+    duration="Duration of role in days",
+    amount="Sponsored amount"
 )
 @app_commands.checks.has_permissions(manage_roles=True)
 async def addrole(
