@@ -114,8 +114,19 @@ async def setrolelog(interaction: discord.Interaction, channel: discord.TextChan
     duration="Duration of role in days"
 )
 @app_commands.checks.has_permissions(manage_roles=True)
-async def addrole(interaction: discord.Interaction, user: discord.User, role: discord.Role, duration: int):
+async def addrole(
+    interaction: discord.Interaction, 
+    user: discord.User, 
+    role: discord.Role, 
+    duration: int | None = None,
+    amount: int | None = None
+):
+    if duration is None and amount is None:
+        return await interaction.response.send_message("Error: must fill in either `duration` or `amount` field.", ephemeral=True)
+    elif duration is None:
+        duration = round(amount * 92 / 10)
     await interaction.response.defer(ephemeral=True) # Give bot longer time to respond in interaction
+
     member = interaction.guild.get_member(user.id)
     action_type = "Assignment"
 
