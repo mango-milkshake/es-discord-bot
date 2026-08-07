@@ -38,22 +38,19 @@ async def init_db():
         # Create main timed roles table:
         db.execute("""
             CREATE TABLE IF NOT EXISTS timed_roles (
-                user_id INTEGER, 
-                guild_id INTEGER,
-                role_id INTEGER,
+                user_id TEXT, 
+                guild_id TEXT,
+                role_id TEXT,
                 end_time TEXT,
                 PRIMARY KEY (user_id, guild_id, role_id)
             )
         """)
-
-        # Create index for tracking role end time:
-        db.execute("CREATE INDEX IF NOT EXISTS idx_end_time ON timed_roles (end_time)")
         
         # Create table for Guild (Server) configs:
         db.execute("""
             CREATE TABLE IF NOT EXISTS guild_settings (
-                guild_id INTEGER PRIMARY KEY,
-                role_log_channel_id INTEGER
+                guild_id TEXT PRIMARY KEY,
+                role_log_channel_id TEXT
             )
         """)
 
@@ -104,7 +101,7 @@ async def setrolelog(interaction: discord.Interaction, channel: discord.TextChan
     db.execute("""
             INSERT OR REPLACE INTO guild_settings (guild_id, role_log_channel_id)
             VALUES (?, ?)
-    """, (interaction.guild.id, channel.id))
+    """, (str(interaction.guild.id), str(channel.id)))
     db.commit()
     
     await interaction.followup.send(f"Timed role updates set up to be logged in {channel.mention}.", ephemeral=True)
@@ -138,7 +135,7 @@ async def addrole(
     # Check if user already has this role
     cursor = db.execute(
         "SELECT end_time FROM timed_roles WHERE user_id = ? AND guild_id = ? AND role_id = ?",
-        (user.id, interaction.guild.id, role.id)
+        (str(user.id), str(interaction.guild.id), str(role.id))
     )
     row = cursor.fetchone()
     
@@ -163,13 +160,13 @@ async def addrole(
     db.execute("""
         INSERT OR REPLACE INTO timed_roles (user_id, guild_id, role_id, end_time)
         VALUES (?, ?, ?, ?)
-    """, (user.id, interaction.guild.id, role.id, new_end.isoformat()))
+    """, (str(user.id), str(interaction.guild.id), str(role.id), new_end.isoformat()))
     db.commit()
 
     # Send update log into specified channel
     cursor = db.execute(
         "SELECT role_log_channel_id FROM guild_settings WHERE guild_id = ?",
-        (interaction.guild.id,)
+        (str(interaction.guild.id),)
     )
     row = cursor.fetchone()
 
@@ -203,7 +200,7 @@ async def checkrole(interaction: discord.Interaction, role: discord.Role):
     cursor = db.execute("""
         SELECT end_time FROM timed_roles WHERE
         user_id = ? AND guild_id = ? AND role_id = ?
-    """, (interaction.user.id, interaction.guild.id, role.id))
+    """, (str(interaction.user.id), str(interaction.guild.id), str(role.id)))
     row = cursor.fetchone()
 
     if not row:
@@ -225,7 +222,7 @@ async def check_role_expiry(guild_id: int = None):
 
     if guild_id:
         query = "SELECT user_id, guild_id, role_id FROM timed_roles WHERE end_time <= ? AND guild_id = ?"
-        params = (now, guild_id)
+        params = (now, str(guild_id))
     else:
         query = "SELECT user_id, guild_id, role_id FROM timed_roles WHERE end_time <= ?"
         params = (now,)
@@ -241,7 +238,7 @@ async def check_role_expiry(guild_id: int = None):
             # guild no longer exists, delete records
             db.execute(
                 "DELETE FROM timed_roles WHERE user_id = ? AND guild_id = ? AND role_id = ?",
-                (user_id, guild_id, role_id)
+                (str(user_id), str(guild_id), str(role_id))
             )
             continue
 
@@ -254,7 +251,7 @@ async def check_role_expiry(guild_id: int = None):
         
         cursor = db.execute(
             "SELECT role_log_channel_id FROM guild_settings WHERE guild_id = ?",
-            (guild.id,)
+            (str(guild.id),)
         )
         row = cursor.fetchone()
 
@@ -279,7 +276,7 @@ async def check_role_expiry(guild_id: int = None):
 
         db.execute(
             "DELETE FROM timed_roles WHERE user_id = ? AND guild_id = ? AND role_id = ?",
-            (user_id, guild_id, role_id)
+            (str(user_id), str(guild_id), str(role_id))
         )
         db.commit()
 
@@ -353,7 +350,7 @@ async def listrole(interaction: discord.Interaction, role: discord.Role):
         SELECT user_id, end_time FROM timed_roles
         WHERE guild_id = ? AND role_id = ?
         ORDER BY end_time ASC
-    """, (interaction.guild.id, role.id))
+    """, (str(interaction.guild.id), str(role.id)))
     rows = cursor.fetchall()
     if not rows:
         return await interaction.followup.send(f"No users with **{role.name}** role.", ephemeral=True)
@@ -371,7 +368,7 @@ async def clearrole(interaction: discord.Interaction, role: discord.Role = None)
     if role is not None: # clear certain role only
         cursor = db.execute(
             "SELECT user_id FROM timed_roles WHERE guild_id = ? AND role_id = ?",
-            (guild.id, role.id)
+            (str(guild.id), str(role.id))
         )
         rows = cursor.fetchall()
         if not rows and not role.members:
@@ -379,7 +376,7 @@ async def clearrole(interaction: discord.Interaction, role: discord.Role = None)
         
         db.execute(
             "DELETE FROM timed_roles WHERE guild_id = ? AND role_id = ?",
-            (guild.id, role.id)
+            (str(guild.id), str(role.id))
         )
         db.commit()
 
@@ -396,7 +393,7 @@ async def clearrole(interaction: discord.Interaction, role: discord.Role = None)
     else: # Clear all timed roles in server
         cursor = db.execute(
             "SELECT user_id, role_id FROM timed_roles WHERE guild_id = ?",
-            (guild.id,)
+            (str(guild.id),)
         )
         rows = cursor.fetchall()
         if not rows:
@@ -410,7 +407,7 @@ async def clearrole(interaction: discord.Interaction, role: discord.Role = None)
                 await member.remove_roles(target_role)
                 removed_count += 1
         
-        db.execute("DELETE FROM timed_roles WHERE guild_id = ?", (guild.id,))
+        db.execute("DELETE FROM timed_roles WHERE guild_id = ?", (str(guild.id),))
         db.commit()
         await interaction.followup.send(f"Cleared all timed roles in server.", ephemeral=True)
 
@@ -420,7 +417,7 @@ async def clearrole(interaction: discord.Interaction, role: discord.Role = None)
         dc_count = removed_count
         
     cursor = db.execute(
-        "SELECT role_log_channel_id FROM guild_settings WHERE guild_id = ?", (guild.id,)
+        "SELECT role_log_channel_id FROM guild_settings WHERE guild_id = ?", (str(guild.id),)
     )
     row = cursor.fetchone()
 
