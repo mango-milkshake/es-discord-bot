@@ -252,7 +252,7 @@ async def check_role_expiry(guild_id: int = None):
         return
     
     for user_id, guild_id, role_id in expired_roles:
-        guild = bot.get_guild(guild_id)
+        guild = bot.get_guild(int(guild_id))
         if not guild:
             # guild no longer exists, delete records
             await db_execute(
@@ -261,8 +261,14 @@ async def check_role_expiry(guild_id: int = None):
             )
             continue
 
-        role = guild.get_role(role_id)
-        member = guild.get_member(user_id)
+        role = guild.get_role(int(role_id))
+        member = guild.get_member(int(user_id))
+        if not member:
+            try:
+                member = await guild.fetch_member(int(user_id))
+            except discord.NotFound:
+                member = None
+        
         removed = False
         if member and role and role in member.roles:
             await member.remove_roles(role, reason="Timed role expired.")
