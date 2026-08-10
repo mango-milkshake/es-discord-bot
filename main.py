@@ -48,7 +48,7 @@ async def db_execute(query: str, params: tuple = (), commit: bool = True):
     await asyncio.to_thread(_run)
 
 async def db_commit():
-    await asyncio.to_thread(db.commit())
+    await asyncio.to_thread(db.commit)
 
 async def init_db():
     '''Create database table and indexes (if not yet existing)'''
