@@ -88,7 +88,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         else:
             await interaction.response.send_message("You do not have permission to run this command.", ephemeral=True)
     else:
-        print(f"Slash command error occurred: {error}")
+        print(f"[ERROR] Slash command error occurred: {error}")
 
 @bot.event
 async def on_ready():
@@ -308,7 +308,11 @@ CHECK_TIME = time(hour=0, minute=0, tzinfo=timezone.utc)
 
 @tasks.loop(time=CHECK_TIME)
 async def daily_expiry_check():
-    await check_role_expiry()
+    try:
+        await check_role_expiry()
+        print(f"[INFO] Daily role expiry check completed at {datetime.now(timezone.utc).isoformat()}")
+    except Exception as e:
+        print(f"[ERROR] Error during daily role expiry check: {e}")
 
 @bot.tree.command(name="checkexpiry", description="Immediately run role expiration check for this server.")
 @app_commands.checks.has_permissions(administrator=True)
