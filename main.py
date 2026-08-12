@@ -95,6 +95,9 @@ async def on_ready():
     # Start up bot
     print(f"Logged in as {bot.user.name}")
     await init_db()
+    if not daily_expiry_check.is_running():
+        daily_expiry_check.start()
+        print("[INFO] Started daily role expiry check task loop.")
 
 @bot.command()
 @commands.is_owner()
