@@ -317,6 +317,10 @@ async def daily_expiry_check():
     except Exception as e:
         print(f"[ERROR] Error during daily role expiry check: {e}")
 
+@daily_expiry_check.error
+async def daily_expiry_check_error(error):
+    print(f"[EXPIRY CHECK TASK ERROR]: {error}")
+
 @bot.tree.command(name="checkexpiry", description="Immediately run role expiration check for this server.")
 @app_commands.checks.has_permissions(administrator=True)
 async def checkexpiry(interaction: discord.Interaction):
