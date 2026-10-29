@@ -307,9 +307,7 @@ async def check_role_expiry(guild_id: int = None):
         )
     await db_commit()
 
-CHECK_TIME = time(hour=0, minute=0, tzinfo=timezone.utc)
-
-@tasks.loop(time=CHECK_TIME)
+@tasks.loop(hours=24)
 async def daily_expiry_check():
     try:
         await check_role_expiry()
