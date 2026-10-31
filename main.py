@@ -34,17 +34,44 @@ db = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
 
 # database helper functions
 
+def refresh_db():
+    global db
+    try:
+        db = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+    except Exception as e:
+        print(f"[ERROR] Failed to reconnect to database: {e}")
+
 async def db_fetch(query: str, params: tuple = (), fetch_all: bool = False):
     def _run():
-        cursor = db.execute(query, params)
-        return cursor.fetchall() if fetch_all else cursor.fetchone()
+        global db
+        try:
+            cursor = db.execute(query, params)
+            return cursor.fetchall() if fetch_all else cursor.fetchone()
+        except Exception as e:
+            if "stream not found" in str(e):
+                print("[WARN] Turso stream expired. Reconnecting...")
+                refresh_db()
+                cursor = db.execute(query, params)
+                return cursor.fetchall() if fetch_all else cursor.fetchone()
+            raise e
     return await asyncio.to_thread(_run)
 
 async def db_execute(query: str, params: tuple = (), commit: bool = True):
     def _run():
-        db.execute(query, params)
-        if commit:
-            db.commit()
+        global db
+        try:
+            db.execute(query, params)
+            if commit:
+                db.commit()
+        except Exception as e:
+            if "stream not found" in str(e):
+                print("[WARN] Turso stream expired. Reconnecting...")
+                refresh_db()
+                db.execute(query, params)
+                if commit:
+                    db.commit()
+            else:
+                raise e
     await asyncio.to_thread(_run)
 
 async def db_commit():
