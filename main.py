@@ -517,4 +517,27 @@ def main():
     bot.run(token, log_handler=None, log_level=logging.DEBUG, root_logger=True)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except discord.HTTPException as e:
+        print("\n========== DISCORD HTTP ERROR ==========")
+        print(f"Status: {e.status}")
+        print(f"Error code: {e.code}")
+        print(f"Response body: {e.text}")
+
+        # Extract relevant response headers
+        headers = e.response.headers
+
+        for header in [
+            "Retry-After",
+            "X-RateLimit-Global",
+            "X-RateLimit-Scope",
+            "X-RateLimit-Bucket",
+            "CF-Ray",
+            "Server",
+            "Content-Type"
+        ]:
+            print(f"{header}: {headers.get(header, 'Not present')}")
+
+        print("========================================\n")
+        raise
