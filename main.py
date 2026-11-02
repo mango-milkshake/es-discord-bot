@@ -10,12 +10,26 @@ from keep_alive import keep_alive
 load_dotenv()
 token = os.getenv('BOT_TOKEN')
 
-TEST_MODE = False
-if TEST_MODE == False:
+if os.getenv("RENDER"):
     keep_alive()
 
 # Logging Handler
-handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
+
+file_handler = logging.FileHandler(
+    filename='discord.log',
+    encoding='utf-8',
+    mode='w'
+)
+
+handlers = [file_handler]
+
+if os.getenv("RENDER"):
+    handlers.append(logging.StreamHandler())
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    handlers=handlers
+)
 
 # Bot's Intents
 intents = discord.Intents.default()
@@ -500,7 +514,7 @@ async def clearrole(interaction: discord.Interaction, role: discord.Role = None)
 # run bot
 
 def main():
-    bot.run(token, log_handler=handler, log_level=logging.DEBUG)
+    bot.run(token, log_handler=None, log_level=logging.DEBUG, root_logger=True)
 
 if __name__ == "__main__":
     main()
